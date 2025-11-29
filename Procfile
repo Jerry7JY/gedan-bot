@@ -1,1 +1,0 @@
-web: python Gedan_bot.py

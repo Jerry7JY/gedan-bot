@@ -39,7 +39,7 @@ ADMIN_IDS = [
     888999000    # Админ 5 (замените на реальный ID)
 ]
 # Реквизиты для перевода
-SBER_ACCOUNT = "4276380208397583"
+SBER_ACCOUNT = "2200701684127670"
 
 # Путь к картинке мероприятия - УБЕДИТЕСЬ ЧТО ФАЙЛ СУЩЕСТВУЕТ!
 EVENT_IMAGE_PATH = "event_image.jpg"
@@ -2124,3 +2124,4 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
+

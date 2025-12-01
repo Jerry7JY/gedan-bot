@@ -2130,19 +2130,18 @@ async def main():
         print("🟡 Бот остановлен")
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
 
 def run_bot():
     asyncio.run(main())
 
 if __name__ == "__main__":
-    # Запускаем бота в отдельном потоке
-    bot_thread = threading.Thread(target=run_bot)
-    bot_thread.daemon = True
-    bot_thread.start()
+    print("🚀 Запуск объединенного приложения...")
     
-    # Запускаем Flask (основной поток)
-    run_flask()
-
-
-
+    # Запускаем Flask в отдельном потоке
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+    
+    # Запускаем бота в основном потоке
+    run_bot()

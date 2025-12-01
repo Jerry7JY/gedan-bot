@@ -1,6 +1,6 @@
-aiogram==2.25.1
+aiogram==3.0.0b6  # Бета версия для Python 3.13
 python-dotenv==1.0.0
 supabase==1.1.1
 flask==2.3.3
 requests==2.31.0
-aiohttp==3.9.5  # Новая версия с бинарными wheel-пакетами
+aiohttp==3.9.5  # Новая версия

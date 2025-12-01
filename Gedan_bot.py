@@ -14,7 +14,14 @@ from aiogram.types import FSInputFile
 import supabase
 from supabase import create_client
 from dotenv import load_dotenv
+from flask import Flask
+import threading
 
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return 'Bot is running!', 200
 # Загрузка переменных окружения
 load_dotenv()  # Всегда пытаемся загрузить .env
 
@@ -2121,7 +2128,21 @@ async def main():
         print(f"🔴 КРИТИЧЕСКАЯ ОШИБКА: {e}")
     finally:
         print("🟡 Бот остановлен")
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host='0.0.0.0', port=port)
+
+def run_bot():
+    asyncio.run(main())
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    # Запускаем бота в отдельном потоке
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    # Запускаем Flask (основной поток)
+    run_flask()
+
+
 

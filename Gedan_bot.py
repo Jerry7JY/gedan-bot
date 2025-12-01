@@ -1,10 +1,8 @@
 import os
 import asyncio
 import datetime
-import time
 import json
 import requests
-from io import BytesIO
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -14,13 +12,11 @@ from aiogram.types import FSInputFile
 import supabase
 from supabase import create_client
 from dotenv import load_dotenv
-from flask import Flask, request
-import threading
 
-app = Flask(__name__)
+
 
 # Загрузка переменных окружения
-load_dotenv()  # Всегда пытаемся загрузить .env
+load_dotenv()
 
 # Настройки из переменных окружения
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -29,19 +25,10 @@ SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
 # Проверка обязательных переменных
 if not BOT_TOKEN:
-    raise ValueError("❌ BOT_TOKEN не найден! Убедитесь, что переменная установлена в Render")
+    raise ValueError("❌ BOT_TOKEN не найден! Проверьте файл .env")
 
 if not SUPABASE_URL or not SUPABASE_KEY:
     print("⚠️ Supabase переменные не найдены. Некоторые функции могут не работать")
-
-# Настройка вебхука для Render
-RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
-WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
-
-# Дополнительные настройки для UptimeRobot
-HEALTH_CHECK_PATH = "/health"
-HEALTH_CHECK_URL = RENDER_EXTERNAL_URL + HEALTH_CHECK_PATH
 
 # Список админов (5 человек)
 ADMIN_IDS = [
@@ -51,8 +38,10 @@ ADMIN_IDS = [
     1121472787,  # Админ 4 (Снапков Дмитрий)
     888999000    # Админ 5 (замените на реальный ID)
 ]
+
 # Реквизиты для перевода
-SBER_ACCOUNT = "2200701684127670"
+SBER_ACCOUNT_1 = "2200701684127670"
+SBER_ACCOUNT_2 = "2202207443297406"
 
 # Путь к картинке мероприятия
 EVENT_IMAGE_PATH = "event_image.jpg"
@@ -210,7 +199,7 @@ async def get_supabase_file_info(order_id: int):
         print(f"❌ Ошибка поиска файла в Supabase: {e}")
         return None
 
-# Функции для логирования (только в файл, без SQLite)
+# Функции для логирования
 def log_event(user_id, username, action, details=""):
     """АВТОМАТИЧЕСКОЕ ЛОГИРОВАНИЕ ВСЕХ ДЕЙСТВИЙ (файл + консоль)"""
     moscow_time = datetime.datetime.now()
@@ -219,10 +208,8 @@ def log_event(user_id, username, action, details=""):
     if details:
         log_message += f" - {details}"
     
-    # Всегда выводим в консоль (для Render)
     print("🔹 " + log_message)
     
-    # Сохраняем в файл (для локальной разработки)
     try:
         with open("bot_log.txt", "a", encoding="utf-8") as f:
             f.write(log_message + "\n")
@@ -252,7 +239,6 @@ def log_admin_action(user_id, username, action, details=""):
         log_message += f" - {details}"
     print("🔸 " + log_message)
     
-    # Сохраняем в файл (для локальной разработки)
     try:
         with open("admin_log.txt", "a", encoding="utf-8") as f:
             f.write(log_message + "\n")
@@ -262,7 +248,7 @@ def log_admin_action(user_id, username, action, details=""):
 # Состояния для FSM
 class OrderStates(StatesGroup):
     waiting_for_event = State()
-    waiting_for_rules_confirmation = State()  # НОВОЕ СОСТОЯНИЕ ДЛЯ ПРАВИЛ
+    waiting_for_rules_confirmation = State()
     waiting_for_tariff = State()
     waiting_for_participants = State()
     waiting_for_payment = State()
@@ -295,11 +281,9 @@ def save_user(user_id):
                 json.dump(list(users), f, ensure_ascii=False, indent=2)
             print(f"✅ Новый пользователь сохранен для рассылки: {user_id}")
             
-            # Логируем в файл
             with open("users_log.txt", "a", encoding="utf-8") as f:
                 timestamp = datetime.datetime.now().strftime("%d.%m.%Y %H:%M:%S")
                 f.write(f"[{timestamp}] 👤 Новый пользователь для рассылки: {user_id}\n")
-        # Если пользователь уже есть, ничего не делаем (тихо пропускаем)
     except Exception as e:
         print(f"⚠️ Не удалось сохранить пользователя: {e}")
 
@@ -413,7 +397,6 @@ class Database:
     def create_orders_table(self):
         """АВТОМАТИЧЕСКОЕ СОЗДАНИЕ ТАБЛИЦЫ ЧЕРЕЗ SQL"""
         try:
-            # Создаем простую таблицу через вставку тестовых данных
             test_data = {
                 "user_id": 1,
                 "username": "test",
@@ -426,7 +409,6 @@ class Database:
             result = self.supabase.table("orders").insert(test_data).execute()
             print("✅ Таблица orders создана автоматически")
             
-            # Удаляем тестовые данные
             if result.data:
                 self.supabase.table("orders").delete().eq("id", result.data[0]['id']).execute()
             
@@ -547,32 +529,25 @@ class Database:
     def get_statistics(self):
         """ПОЛУЧЕНИЕ СТАТИСТИКИ ИЗ SUPABASE"""
         try:
-            # Общее количество заказов
             result_total = self.supabase.table("orders").select("id", count="exact").execute()
             total_orders = result_total.count or 0
             
-            # Оплаченные заказы
             result_paid = self.supabase.table("orders").select("id", count="exact").eq("status", "paid").execute()
             paid_orders = result_paid.count or 0
             
-            # Ожидающие заказы
             result_pending = self.supabase.table("orders").select("id", count="exact").eq("status", "pending").execute()
             pending_orders = result_pending.count or 0
             
-            # Общая выручка
             result_revenue = self.supabase.table("orders").select("total_price").eq("status", "paid").execute()
             total_revenue = sum(order['total_price'] for order in result_revenue.data) if result_revenue.data else 0
             
-            # Уникальные пользователи
             result_users = self.supabase.table("orders").select("user_id").execute()
             unique_users = len(set(order['user_id'] for order in result_users.data)) if result_users.data else 0
             
-            # Заказы за сегодня
             today = datetime.datetime.now().strftime('%Y-%m-%d')
             result_today = self.supabase.table("orders").select("id", count="exact").gte("created_at", f"{today}T00:00:00").lt("created_at", f"{today}T23:59:59").execute()
             today_orders = result_today.count or 0
             
-            # Выручка за сегодня
             result_today_revenue = self.supabase.table("orders").select("total_price").eq("status", "paid").gte("created_at", f"{today}T00:00:00").lt("created_at", f"{today}T23:59:59").execute()
             today_revenue = sum(order['total_price'] for order in result_today_revenue.data) if result_today_revenue.data else 0
             
@@ -602,10 +577,7 @@ def is_admin(user_id):
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     await state.clear()
-    
-    # Автоматически сохраняем пользователя для рассылки
     save_user(message.from_user.id)
-    
     await show_main_menu(message)
 
 # КОМАНДА /reset
@@ -627,12 +599,10 @@ async def cmd_check_storage(message: types.Message):
     log_admin_action(message.from_user.id, message.from_user.username, "🔍 ПРОВЕРКА SUPABASE STORAGE")
     
     try:
-        # Проверяем подключение к Supabase
         if not supabase_client:
             await message.answer("❌ Supabase клиент не инициализирован")
             return
         
-        # Проверяем bucket receipts
         buckets = supabase_client.storage.list_buckets()
         bucket_names = [bucket.name for bucket in buckets]
         
@@ -641,11 +611,9 @@ async def cmd_check_storage(message: types.Message):
         if "receipts" in bucket_names:
             storage_info += "✅ Bucket 'receipts' существует\n"
             
-            # Получаем список файлов
             files = supabase_client.storage.from_("receipts").list()
             storage_info += f"📁 Файлов в хранилище: {len(files)}\n\n"
             
-            # Показываем последние 5 файлов
             if files:
                 storage_info += "<b>Последние 5 файлов:</b>\n"
                 for file in files[:5]:
@@ -658,7 +626,6 @@ async def cmd_check_storage(message: types.Message):
         else:
             storage_info += "❌ Bucket 'receipts' не найден\n"
         
-        # Проверяем политики доступа
         storage_info += f"\n<b>Политики доступа:</b>\n"
         storage_info += "• Убедитесь что bucket 'receipts' публичный\n"
         storage_info += "• Проверьте политики в Supabase Dashboard\n"
@@ -679,7 +646,6 @@ async def show_main_menu(message: types.Message):
         [types.KeyboardButton(text="🎫 Посмотреть тарифы"), types.KeyboardButton(text="💬 Помощь")]
     ]
     
-    # Если пользователь админ - добавляем кнопку админ-панели
     if is_admin(message.from_user.id):
         keyboard.append([types.KeyboardButton(text="👨‍💼 Консоль Админа")])
     
@@ -701,8 +667,6 @@ async def button_start(message: types.Message, state: FSMContext):
     log_event(message.from_user.id, message.from_user.username, "🔄 НАЖАЛ(-а) 'СТАРТ'")
     
     await state.clear()
-    
-    # Автоматически сохраняем пользователя для рассылки
     save_user(message.from_user.id)
     
     welcome_text = """
@@ -728,7 +692,6 @@ async def button_start(message: types.Message, state: FSMContext):
         [types.KeyboardButton(text="🎫 Посмотреть тарифы"), types.KeyboardButton(text="💬 Помощь")]
     ]
     
-    # Если пользователь админ - добавляем кнопку админ-панели
     if is_admin(message.from_user.id):
         keyboard.append([types.KeyboardButton(text="👨‍💼 Консоль Админа")])
     
@@ -736,10 +699,10 @@ async def button_start(message: types.Message, state: FSMContext):
     
     await message.answer(welcome_text, reply_markup=markup, parse_mode="HTML")
 
-# ИСПРАВЛЕННАЯ ИНФОРМАЦИЯ О МЕРОПРИЯТИИ - ФОТО И ОПИСАНИЕ В ОДНОМ СООБЩЕНИИ
+# ИНФОРМАЦИЯ О МЕРОПРИЯТИИ
 @dp.message(F.text == "📅 Информация о мероприятии")
 async def button_event_info(message: types.Message):
-    save_user(message.from_user.id)  # Сохраняем для рассылки
+    save_user(message.from_user.id)
     log_event(message.from_user.id, message.from_user.username, "📅 ЗАПРОСИЛ(-а) ИНФО О МЕРОПРИЯТИИ")
     
     event_text = """
@@ -773,7 +736,6 @@ async def button_event_info(message: types.Message):
     ]
     markup = types.InlineKeyboardMarkup(inline_keyboard=keyboard)
     
-    # Пытаемся отправить фото мероприятия С ОПИСАНИЕМ В ОДНОМ СООБЩЕНИИ
     try:
         if os.path.exists(EVENT_IMAGE_PATH):
             photo = FSInputFile(EVENT_IMAGE_PATH)
@@ -788,16 +750,14 @@ async def button_event_info(message: types.Message):
             await message.answer(event_text, reply_markup=markup, parse_mode="HTML")
     except Exception as e:
         print(f"❌ Ошибка отправки фото: {e}")
-        # Если фото не отправилось, отправляем только текст
         await message.answer(event_text, reply_markup=markup, parse_mode="HTML")
 
-# ПОКАЗ ТАРИФОВ - ТЕПЕРЬ С ПРАВИЛАМИ
+# ПОКАЗ ТАРИФОВ
 @dp.message(F.text == "🎫 Посмотреть тарифы")
 async def cmd_tariffs(message: types.Message, state: FSMContext):
-    save_user(message.from_user.id)  # Сохраняем для рассылки
+    save_user(message.from_user.id)
     log_event(message.from_user.id, message.from_user.username, "🎫 ЗАПРОСИЛ(-а) ТАРИФЫ")
     
-    # Показываем правила вместо прямого перехода к тарифам
     rules_text = """
 <b>ВАЖНО!</b>
 
@@ -830,11 +790,7 @@ async def cmd_tariffs(message: types.Message, state: FSMContext):
 @dp.callback_query(OrderStates.waiting_for_rules_confirmation, F.data == "accept_rules")
 async def accept_rules(callback: types.CallbackQuery, state: FSMContext):
     log_event(callback.from_user.id, callback.from_user.username, "✅ ПРИНЯЛ(-а) ПРАВИЛА")
-    
-    # Удаляем сообщение с правилами
     await callback.message.delete()
-    
-    # Показываем тарифы в новом сообщении
     await show_tariffs_menu(callback.message, state)
     await callback.answer()
 
@@ -846,7 +802,6 @@ async def show_tariffs_menu(message: types.Message, state: FSMContext):
 Каждый тариф — это не просто билет, это твой уникальный опыт и комьюнити!
     """
     
-    # Создаем клавиатуру с 4 кнопками
     keyboard = [
         [
             types.InlineKeyboardButton(text="🎅 ДЛЯ ПАРНЕЙ", callback_data="tariff_type_male"),
@@ -859,7 +814,6 @@ async def show_tariffs_menu(message: types.Message, state: FSMContext):
     ]
     markup = types.InlineKeyboardMarkup(inline_keyboard=keyboard)
     
-    # Отправляем новое сообщение с тарифами
     await message.answer(tariffs_intro, reply_markup=markup, parse_mode="HTML")
     await state.set_state(OrderStates.waiting_for_tariff)
 
@@ -868,7 +822,6 @@ async def show_tariffs_menu(message: types.Message, state: FSMContext):
 async def show_tariffs(callback: types.CallbackQuery, state: FSMContext):
     log_event(callback.from_user.id, callback.from_user.username, "🎫 НАЖАЛ 'ВЫБРАТЬ ТАРИФ'")
     
-    # Вместо прямого показа тарифов, показываем правила в НОВОМ сообщении
     rules_text = """
 <b>ВАЖНО!</b>
 
@@ -894,9 +847,7 @@ async def show_tariffs(callback: types.CallbackQuery, state: FSMContext):
     ]
     markup = types.InlineKeyboardMarkup(inline_keyboard=keyboard)
     
-    # Отправляем новое сообщение с правилами
     await callback.message.answer(rules_text, reply_markup=markup, parse_mode="HTML")
-    
     await state.set_state(OrderStates.waiting_for_rules_confirmation)
     await callback.answer()
 
@@ -904,10 +855,7 @@ async def show_tariffs(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(OrderStates.waiting_for_rules_confirmation, F.data == "back_to_main")
 async def back_to_main_from_rules(callback: types.CallbackQuery, state: FSMContext):
     log_event(callback.from_user.id, callback.from_user.username, "⬅️ ВЕРНУЛСЯ В ГЛАВНОЕ МЕНЮ ИЗ ПРАВИЛ")
-    
-    # Удаляем сообщение с правилами
     await callback.message.delete()
-    
     await state.clear()
     await show_main_menu(callback.message)
     await callback.answer()
@@ -1020,7 +968,7 @@ async def process_tariff_selection(callback: types.CallbackQuery, state: FSMCont
         log_event(callback.from_user.id, callback.from_user.username, "❌ ОШИБКА ВЫБОРА ТАРИФА", str(e))
         await callback.answer("❌ Ошибка, попробуй снова", show_alert=True)
 
-# ОБРАБОТКА ВВОДА ДАННЫХ УЧАСТНИКОВ - ДОБАВЛЯЕМ СОХРАНЕНИЕ tariff_name
+# ОБРАБОТКА ВВОДА ДАННЫХ УЧАСТНИКОВ
 @dp.message(OrderStates.waiting_for_participants)
 async def process_participants_input(message: types.Message, state: FSMContext):
     try:
@@ -1030,7 +978,6 @@ async def process_participants_input(message: types.Message, state: FSMContext):
         
         log_event(message.from_user.id, message.from_user.username, "📝 ВВЕЛ(-а) ДАННЫЕ УЧАСТНИКОВ", f"Тариф: {tariff_name}")
         
-        # Парсим введенные данные
         lines = [line.strip() for line in message.text.strip().split('\n') if line.strip()]
         
         if len(lines) != tariff['min_people']:
@@ -1057,13 +1004,11 @@ async def process_participants_input(message: types.Message, state: FSMContext):
             
             full_name, telegram, phone = parts
             
-            # Валидация данных
             if len(full_name) < 2:
                 errors.append(f"❌ Участник {i}: ФИО слишком короткое")
                 continue
                 
             if not telegram.startswith('@'):
-                # Если пользователь не указал @, добавляем username отправителя как fallback
                 telegram = f"@{message.from_user.username}" if message.from_user.username else telegram
                 
             if not phone.replace('+', '').isdigit() or len(phone) < 10:
@@ -1076,19 +1021,17 @@ async def process_participants_input(message: types.Message, state: FSMContext):
                 "phone": phone
             })
         
-        # Если есть ошибки - показываем их
         if errors:
             error_text = "<b>❌ Ошибки в данных:</b>\n" + "\n".join(errors)
             error_text += f"\n\n<b>Попробуйте еще раз. Формат для каждого участника:</b>\nФИО, телеграмм, телефон\n\n<b>Пример:</b>\nИванов Иван, @ivanov, 79991234567"
             await message.answer(error_text, parse_mode="HTML")
             return
         
-        # СОХРАНЯЕМ ВСЕ ДАННЫЕ В СОСТОЯНИЕ
         total_price = tariff.get('total', tariff['price'])
         await state.update_data(
             participants=participants,
-            tariff_name=tariff_name,  # ДОБАВЛЯЕМ ЭТО!
-            total_price=total_price   # ДОБАВЛЯЕМ ЭТО!
+            tariff_name=tariff_name,
+            total_price=total_price
         )
         
         keyboard = [
@@ -1129,14 +1072,12 @@ async def process_participants_input(message: types.Message, state: FSMContext):
         log_event(message.from_user.id, message.from_user.username, "❌ ОШИБКА ВВОДА ДАННЫХ", str(e))
         await message.answer("❌ Ошибка, начните снова с /start")
 
-# ОБРАБОТКА ОПЛАТЫ - УПРОЩАЕМ ЛОГИКУ
+# ОБРАБОТКА ОПЛАТЫ
 @dp.callback_query(F.data == "proceed_to_payment")
 async def process_payment(callback: types.CallbackQuery, state: FSMContext):
     try:
-        # ПОЛУЧАЕМ ВСЕ ДАННЫЕ ИЗ СОСТОЯНИЯ
         user_data = await state.get_data()
         
-        # ПРОВЕРЯЕМ ЧТО ВСЕ НЕОБХОДИМЫЕ ДАННЫЕ ЕСТЬ
         required_fields = ['selected_tariff', 'participants', 'total_price']
         missing_fields = [field for field in required_fields if field not in user_data]
         
@@ -1155,9 +1096,6 @@ async def process_payment(callback: types.CallbackQuery, state: FSMContext):
         
         log_payment_start(callback.from_user.id, callback.from_user.username, tariff_name, participants, total_price)
         
-        # УБИРАЕМ ЛИШНЕЕ ОБНОВЛЕНИЕ СОСТОЯНИЯ - ДАННЫЕ УЖЕ ЕСТЬ
-        
-        # СОЗДАЕМ ЕДИНОЕ СООБЩЕНИЕ С ВСЕЙ ИНФОРМАЦИЕЙ
         payment_text = f"""
 <b>ФИНАЛЬНЫЙ ШАГ - ОПЛАТА 💳</b>
 
@@ -1165,25 +1103,28 @@ async def process_payment(callback: types.CallbackQuery, state: FSMContext):
 💎 <b>Сумма к оплате:</b> {total_price}₽
 
 📋 <b>Инструкция по оплате:</b>
-1. Переведите {total_price}₽ на указанный ниже счет
-2. Сохраните чек об оплате в виде PDF
-3. Вернитесь в этот чат и отправьте чек
+1. Выберите один из счетов ниже
+2. Переведите {total_price}₽ на выбранный счет
+3. Сохраните чек об оплате в виде PDF
+4. Вернитесь в этот чат и отправьте чек
 
 🏦 <b>РЕКВИЗИТЫ ДЛЯ ПЕРЕВОДА</b>
 
-<b>Банк:</b> Сбербанк
-<b>Номер счета:</b> 
-<code>{SBER_ACCOUNT}</code>
+<b>Счет 1:</b>
+<code>{SBER_ACCOUNT_1}</code>
 
-💡 <b>Совет:</b> Скопируйте номер счета выше и вставьте в приложении банка
+<b>Счет 2:</b>
+<code>{SBER_ACCOUNT_2}</code>
+
+💡 <b>Совет:</b> Нажмите на нужный номер счета, чтобы скопировать его
 
 ⚠️ <b>Важно:</b>
-
 • Бронирование подтверждается только после проверки чека
 • Чек должен содержать сумму и дату перевода
 • Проверка занимает до 24 часов
-• Поддерживаемые форматы: PDF(макс. 20MB)
+• Поддерживаемые форматы: PDF (макс. 20MB)
 • ДРУГИЕ ФОРМАТЫ НЕ ПРИНИМАЮТСЯ!
+
         """
         
         keyboard = [
@@ -1193,7 +1134,6 @@ async def process_payment(callback: types.CallbackQuery, state: FSMContext):
         markup = types.InlineKeyboardMarkup(inline_keyboard=keyboard)
         
         await callback.message.edit_text(payment_text, reply_markup=markup, parse_mode="HTML")
-        
         await state.set_state(OrderStates.waiting_for_receipt)
         await callback.answer()
         
@@ -1237,7 +1177,7 @@ async def send_receipt_request(callback: types.CallbackQuery, state: FSMContext)
     )
     await callback.answer()
 
-# ОБНОВЛЕННАЯ ОБРАБОТКА ЧЕКОВ (только Supabase)
+# ОБРАБОТКА ЧЕКОВ
 @dp.message(OrderStates.waiting_for_receipt, F.document | F.photo)
 async def process_receipt(message: types.Message, state: FSMContext):
     try:
@@ -1248,7 +1188,6 @@ async def process_receipt(message: types.Message, state: FSMContext):
         
         log_event(message.from_user.id, message.from_user.username, "📎 ОТПРАВИЛ ЧЕК", f"Тариф: {tariff_name}")
         
-        # ПРОВЕРКА РАЗМЕРА ФАЙЛА ДЛЯ ДОКУМЕНТОВ
         if message.document:
             if message.document.file_size > MAX_FILE_SIZE:
                 await message.answer(
@@ -1258,7 +1197,6 @@ async def process_receipt(message: types.Message, state: FSMContext):
                 )
                 return
             
-            # ПРОВЕРКА ТИПА ФАЙЛА
             file_name = message.document.file_name or "document"
             file_ext = os.path.splitext(file_name.lower())[1]
             
@@ -1272,7 +1210,6 @@ async def process_receipt(message: types.Message, state: FSMContext):
         
         print(f"💾 Начинаем сохранение заказа в базу после получения чека...")
         
-        # Сохраняем заказ в Supabase
         order = db.add_order(
             user_id=message.from_user.id,
             username=message.from_user.username,
@@ -1289,7 +1226,6 @@ async def process_receipt(message: types.Message, state: FSMContext):
         supabase_order_id = order['id']
         print(f"✅ Заказ #{supabase_order_id} сохранен в Supabase")
         
-        # СОХРАНЯЕМ ИНФОРМАЦИЮ О ФАЙЛЕ
         file_info = None
         receipt_data = None
         
@@ -1304,7 +1240,6 @@ async def process_receipt(message: types.Message, state: FSMContext):
             print(f"📎 Сохраняем документ-чек для заказа #{supabase_order_id}: {file_info['filename']} ({file_info['file_size']} bytes)")
             
         elif message.photo:
-            # Для фото берем самое качественное (последнее в массиве)
             file_info = {
                 'file_id': message.photo[-1].file_id,
                 'file_type': 'photo', 
@@ -1314,7 +1249,6 @@ async def process_receipt(message: types.Message, state: FSMContext):
             }
             print(f"📎 Сохраняем фото-чек для заказа #{supabase_order_id}")
         
-        # ЗАГРУЖАЕМ ФАЙЛ В SUPABASE STORAGE
         if file_info:
             user_info = {
                 'user_id': message.from_user.id,
@@ -1401,7 +1335,6 @@ async def process_broadcast_content(message: types.Message, state: FSMContext):
     broadcast_data = {}
     
     if message.text:
-        # Текстовое сообщение
         broadcast_data = {
             "type": "text",
             "content": message.text
@@ -1409,7 +1342,6 @@ async def process_broadcast_content(message: types.Message, state: FSMContext):
         preview_text = f"<b>Текст:</b>\n{message.text}"
         
     elif message.photo:
-        # Фото с подписью или без
         photo_file_id = message.photo[-1].file_id
         caption = message.caption if message.caption else ""
         
@@ -1425,14 +1357,11 @@ async def process_broadcast_content(message: types.Message, state: FSMContext):
         else:
             preview_text += "\n\n<i>Без подписи</i>"
     
-    # Сохраняем данные рассылки
     await state.update_data(broadcast_data=broadcast_data)
     
-    # Получаем количество пользователей
     users = load_users()
     users_count = len(users)
     
-    # Запрашиваем подтверждение
     confirmation_text = f"""
 📋 <b>Предпросмотр рассылки</b>
 
@@ -1449,7 +1378,6 @@ async def process_broadcast_content(message: types.Message, state: FSMContext):
     ]
     markup = types.InlineKeyboardMarkup(inline_keyboard=keyboard)
     
-    # Если это фото, отправляем его для предпросмотра
     if message.photo:
         photo_file_id = message.photo[-1].file_id
         await message.answer_photo(
@@ -1482,7 +1410,6 @@ async def confirm_broadcast(callback: types.CallbackQuery, state: FSMContext):
     
     progress_message = await callback.message.answer(f"🔄 Начинаю рассылку для {len(users)} пользователей...")
     
-    # Рассылка в зависимости от типа контента
     for user_id in users:
         try:
             if broadcast_data["type"] == "text":
@@ -1506,7 +1433,6 @@ async def confirm_broadcast(callback: types.CallbackQuery, state: FSMContext):
             print(f"❌ Не удалось отправить рассылку пользователю {user_id}: {e}")
             fail_count += 1
     
-    # Обновляем сообщение о прогрессе
     result_text = f"""
 ✅ <b>Рассылка завершена!</b>
 
@@ -1696,7 +1622,7 @@ async def cmd_orders(message: types.Message):
     except Exception as e:
         await message.answer(f"❌ Ошибка получения заказов: {e}")
 
-# ОБНОВЛЕННАЯ КОМАНДА /pending - СРАЗУ С ЧЕКАМИ И ВСЕМИ ДАННЫМИ
+# ОБНОВЛЕННАЯ КОМАНДА /pending
 @dp.message(Command("pending"))
 async def cmd_pending(message: types.Message):
     """Заказы ожидающие оплаты СРАЗУ С ЧЕКАМИ И ВСЕМИ ДАННЫМИ"""
@@ -1713,15 +1639,12 @@ async def cmd_pending(message: types.Message):
             await message.answer("✅ Нет заказов ожидающих оплаты")
             return
         
-        # Сразу отправляем статистику
         stats_text = f"<b>⏳ ЗАКАЗЫ ОЖИДАЮЩИЕ ОПЛАТЫ</b>\n\n"
         stats_text += f"📊 Всего: {len(orders)} заказов на сумму {sum(o['total_price'] for o in orders)}₽\n\n"
         await message.answer(stats_text, parse_mode="HTML")
         
-        # Отправляем каждый заказ с чеком и полными данными
         for order in orders:
             try:
-                # Формируем информацию о заказе с полными данными участников
                 order_info = f"""
 <b>🎫 ЗАКАЗ #{order['id']}</b>
 
@@ -1738,7 +1661,6 @@ async def cmd_pending(message: types.Message):
 👥 <b>Участники ({len(order['participants'])} чел.):</b>
 """
                 
-                # Добавляем информацию о каждом участнике
                 for i, participant in enumerate(order['participants'], 1):
                     order_info += f"""
 <b>Участник {i}:</b>
@@ -1747,22 +1669,18 @@ async def cmd_pending(message: types.Message):
 • Телефон: {participant['phone']}
 """
                 
-                # Проверяем наличие файла в Supabase Storage
                 supabase_file_info = await get_supabase_file_info(order['id'])
                 
                 if supabase_file_info:
-                    # Скачиваем файл из Supabase Storage
                     file_data = supabase_client.storage.from_("receipts").download(supabase_file_info['file_name'])
                     
                     if file_data:
-                        # Сохраняем временно
                         temp_file = f"temp_{supabase_file_info['file_name']}"
                         with open(temp_file, 'wb') as f:
                             f.write(file_data)
                         
                         document = FSInputFile(temp_file)
                         
-                        # Определяем тип файла для отправки
                         if supabase_file_info['file_name'].endswith('.pdf'):
                             await bot.send_document(
                                 message.chat.id,
@@ -1778,23 +1696,19 @@ async def cmd_pending(message: types.Message):
                                 parse_mode="HTML"
                             )
                         
-                        # Удаляем временный файл
                         os.remove(temp_file)
                         
                     else:
-                        # Если не удалось скачать файл, отправляем только информацию с ссылкой
                         await message.answer(
                             order_info + f"\n❌ <b>Не удалось загрузить файл чека</b>\n🔗 <a href='{supabase_file_info['public_url']}'>Ссылка на чек в Supabase</a>",
                             parse_mode="HTML"
                         )
                 else:
-                    # Если чека нет
                     await message.answer(
                         order_info + "\n❌ <b>Чек не прикреплен</b>",
                         parse_mode="HTML"
                     )
                 
-                # Добавляем кнопки управления для каждого заказа
                 keyboard = [
                     [
                         types.InlineKeyboardButton(text="✅ Подтвердить оплату", callback_data=f"approve_{order['id']}"),
@@ -1814,7 +1728,6 @@ async def cmd_pending(message: types.Message):
                     parse_mode="HTML"
                 )
                 
-                # Добавляем разделитель между заказами
                 await message.answer("─" * 40)
                     
             except Exception as e:
@@ -1823,7 +1736,6 @@ async def cmd_pending(message: types.Message):
                 await message.answer(error_msg)
                 continue
         
-        # Финальная статистика
         final_stats = f"""
 ✅ <b>ОБРАБОТКА ЗАВЕРШЕНА</b>
 
@@ -1854,13 +1766,11 @@ async def approve_order_callback(callback: types.CallbackQuery):
     try:
         log_admin_action(callback.from_user.id, callback.from_user.username, "✅ ПОДТВЕРДИЛ ОПЛАТУ ЧЕРЕЗ CALLBACK", f"Order ID: {order_id}")
         
-        # Обновляем статус в Supabase
         success = db.update_order_status(int(order_id), "paid", True)
         
         if success:
             await callback.message.edit_text(f"✅ Заказ #{order_id} подтвержден и перемещен в оплаченные!")
             
-            # Получаем информацию о заказе для уведомления пользователя
             order = db.get_order_by_id(int(order_id))
             if order and order['user_id']:
                 try:
@@ -1897,17 +1807,14 @@ async def cancel_order_callback(callback: types.CallbackQuery):
     try:
         log_admin_action(callback.from_user.id, callback.from_user.username, "❌ ОТМЕНИЛ ЗАКАЗ ЧЕРЕЗ CALLBACK", f"Order ID: {order_id}")
         
-        # Получаем информацию о заказе перед отменой
         order = db.get_order_by_id(int(order_id))
         if not order:
             await callback.answer("❌ Заказ не найден", show_alert=True)
             return
         
-        # Обновляем статус в Supabase
         success = db.update_order_status(int(order_id), "canceled")
         
         if success:
-            # Уведомляем пользователя об отмене заказа
             user_id = order['user_id']
             try:
                 await bot.send_message(
@@ -1945,13 +1852,11 @@ async def refresh_receipt_callback(callback: types.CallbackQuery):
         return
     
     try:
-        # Получаем актуальную информацию о заказе
         order = db.get_order_by_id(int(order_id))
         if not order:
             await callback.answer("❌ Заказ не найден", show_alert=True)
             return
         
-        # Проверяем наличие файла в Supabase Storage
         supabase_file_info = await get_supabase_file_info(int(order_id))
         
         if supabase_file_info:
@@ -2008,7 +1913,7 @@ async def cmd_paid(message: types.Message):
 # ПОМОЩЬ
 @dp.message(F.text == "💬 Помощь")
 async def cmd_help(message: types.Message):
-    save_user(message.from_user.id)  # Сохраняем для рассылки
+    save_user(message.from_user.id)
     log_event(message.from_user.id, message.from_user.username, "💬 ЗАПРОСИЛ(-а) ПОМОЩЬ")
     
     help_text = """
@@ -2044,111 +1949,63 @@ async def handle_other_messages(message: types.Message):
     log_event(message.from_user.id, message.from_user.username, "💬 ОТПРАВИЛ(-а) СООБЩЕНИЕ", f"Текст: {message.text}")
     await show_main_menu(message)
 
-# Flask обработчики для вебхука
-@app.route('/webhook', methods=['POST'])
-async def webhook():
-    """Обработчик вебхука для Telegram"""
-    try:
-        update_data = request.get_json()
-        update = types.Update(**update_data)
-        await dp.feed_update(bot=bot, update=update)
-        return 'ok'
-    except Exception as e:
-        print(f"❌ Ошибка в обработчике вебхука: {e}")
-        return 'error', 500
-
-@app.route('/')
-def home():
-    return 'Bot is running!', 200
-
-@app.route('/health')
-def health():
-    """Health check endpoint для UptimeRobot"""
-    return 'OK', 200
-
-@app.route('/set_webhook')
-def set_webhook():
-    """Установка вебхука (вызовите этот URL в браузере после деплоя)"""
-    try:
-        import requests
-        result = requests.get(f'https://api.telegram.org/bot{BOT_TOKEN}/setWebhook?url={WEBHOOK_URL}')
-        return f'Webhook setup: {result.json()}', 200
-    except Exception as e:
-        return f'Error setting webhook: {e}', 500
-
-# ОСНОВНАЯ ФУНКЦИЯ ЗАПУСКА
+# ЗАПУСК БОТА
 async def main():
-    print("=" * 70)
-    print("🤖 ЗАПУСК БОТА - WEBHOOK РЕЖИМ ДЛЯ RENDER")
-    print("=" * 70)
+    print("=" * 50)
+    print("🤖 ЗАПУСК БОТА GEDAN")
+    print("=" * 50)
     
-    # Создаем bucket для чеков
+    print("🔍 Проверка системы...")
+    
+    # Проверяем наличие файла .env
+    if not BOT_TOKEN:
+        print("❌ ОШИБКА: BOT_TOKEN не найден!")
+        print("💡 Создайте файл .env с содержимым:")
+        print("BOT_TOKEN=ваш_токен_бота")
+        print("SUPABASE_URL=ваш_url")
+        print("SUPABASE_KEY=ваш_ключ")
+        return
+    
+    print(f"✅ Токен бота: {BOT_TOKEN[:10]}...")
+    print(f"✅ Supabase: {'✅' if supabase_client else '❌'}")
+    
     if supabase_client:
         create_receipts_bucket()
     
-    # Создаем файл пользователей если его нет
     if not os.path.exists("users.json"):
         with open("users.json", 'w', encoding='utf-8') as f:
             json.dump([], f, ensure_ascii=False, indent=2)
         print("✅ Файл users.json создан для рассылки")
     
-    # Проверка подключений
-    print("🔍 ПРОВЕРКА СИСТЕМЫ...")
-    print(f"📊 Supabase: {'✅' if supabase_client else '❌'}")
-    print(f"☁️ Supabase Storage: ✅ Bucket 'receipts' создан")
-    print(f"📎 Хранение чеков: ✅ Облачное хранилище готово")
-    print(f"📄 Поддержка PDF: ✅ Макс. размер {MAX_FILE_SIZE // (1024*1024)}MB")
-    print(f"💳 Сбербанк: ✅ {SBER_ACCOUNT}")
-    print(f"🎫 Тарифы: {len(TARIFFS)} шт.")
-    print(f"🖼️ Картинка мероприятия: {'✅' if os.path.exists(EVENT_IMAGE_PATH) else '❌'}")
-    print(f"👨‍💼 Админы: {len(ADMIN_IDS)} человек")
-    print(f"🌐 Webhook URL: {WEBHOOK_URL}")
-    
-    # Показываем статистику пользователей
     users = load_users()
     print(f"👥 Пользователей для рассылки: {len(users)}")
     
-    # Показываем статистику Supabase
     stats = db.get_statistics()
-    print(f"📈 Supabase статистика: {stats['total_orders']} заказов, {stats['total_revenue']}₽ выручки")
+    print(f"📈 Supabase статистика: {stats.get('total_orders', 0)} заказов, {stats.get('total_revenue', 0)}₽ выручки")
     
-    print("\n🎯 ОСНОВНЫЕ ФУНКЦИИ:")
+    print("\n🎯 Основные функции готовы:")
     print("   • 🎫 Выбор мероприятия и тарифа")
     print("   • 👥 Ввод данных участников") 
     print("   • 💳 Оплата переводом на карту")
-    print("   • 📎 Сохранение реальных чеков (PDF, фото)")
-    print("   • ☁️ 100% ОБЛАЧНОЕ ХРАНИЛИЩЕ: Supabase для данных и файлов")
-    print("   • 👨‍💼 Просмотр реальных чеков в админке (/pending)")
-    print("   • ✅ Подтверждение оплаты через кнопки")
-    print("   • 📢 РАССЫЛКА: автоматическое сохранение всех пользователей")
-    print("=" * 70)
+    print("   • 📎 Сохранение чеков в Supabase")
+    print("   • 👨‍💼 Админ панель")
+    print("   • 📢 Рассылка сообщений")
+    print("=" * 50)
+    print("✅ Бот запущен! Ожидаю сообщения...")
+    print("   Нажмите Ctrl+C для остановки")
+    print("=" * 50)
     
-    # Для production (Render) используем webhook
-    print("🌐 РЕЖИМ: Webhook (Production)")
-    try:
-        # Настройка вебхука для Render
-        await bot.set_webhook(
-            url=WEBHOOK_URL,
-            drop_pending_updates=True
-        )
-        print(f"✅ Webhook настроен: {WEBHOOK_URL}")
-    except Exception as e:
-        print(f"❌ Ошибка настройки webhook: {e}")
-
-def run_flask():
-    """Запуск Flask приложения"""
-    port = int(os.environ.get("PORT", 10000))
-    print(f"🚀 Запуск Flask на порту {port}")
-    print(f"🔗 Health check: {HEALTH_CHECK_URL}")
-    print(f"📡 Webhook: {WEBHOOK_URL}")
-    
-    app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
+    # Запускаем бота
+    await dp.start_polling(bot, skip_updates=True)
 
 if __name__ == "__main__":
-    print("🚀 Запуск объединенного приложения...")
-    
-    # Запускаем асинхронную инициализацию
-    asyncio.run(main())
-    
-    # Запускаем Flask сервер
-    run_flask()
+    try:
+        # Для Windows
+        if os.name == 'nt':
+            asyncio.set_event_loop_policy(asyncio.WindowsSelectorEventLoopPolicy())
+        
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("\n👋 Бот остановлен")
+    except Exception as e:
+        print(f"❌ Ошибка запуска: {e}")

@@ -34,10 +34,14 @@ if not BOT_TOKEN:
 if not SUPABASE_URL or not SUPABASE_KEY:
     print("⚠️ Supabase переменные не найдены. Некоторые функции могут не работать")
 
-# Настройка вебхука
+# Настройка вебхука для Render
 RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL", "")
 WEBHOOK_PATH = "/webhook"
-WEBHOOK_URL = RENDER_EXTERNAL_URL + WEBHOOK_PATH
+WEBHOOK_URL = f"{RENDER_EXTERNAL_URL}{WEBHOOK_PATH}"
+
+# Дополнительные настройки для UptimeRobot
+HEALTH_CHECK_PATH = "/health"
+HEALTH_CHECK_URL = RENDER_EXTERNAL_URL + HEALTH_CHECK_PATH
 
 # Список админов (5 человек)
 ADMIN_IDS = [
@@ -50,7 +54,7 @@ ADMIN_IDS = [
 # Реквизиты для перевода
 SBER_ACCOUNT = "2200701684127670"
 
-# Путь к картинке мероприятия - УБЕДИТЕСЬ ЧТО ФАЙЛ СУЩЕСТВУЕТ!
+# Путь к картинке мероприятия
 EVENT_IMAGE_PATH = "event_image.jpg"
 
 # Настройки файлов
@@ -182,7 +186,6 @@ async def get_supabase_file_info(order_id: int):
         found_files = []
         
         for file in files:
-            print(f"📁 Проверка файлa: {file['name']}")
             if target_pattern in file['name']:
                 found_files.append(file)
         
@@ -192,7 +195,6 @@ async def get_supabase_file_info(order_id: int):
             public_url = supabase_client.storage.from_("receipts").get_public_url(file['name'])
             
             print(f"✅ Найден файл: {file['name']}")
-            print(f"🔗 Публичный URL: {public_url}")
             
             return {
                 'file_name': file['name'],
@@ -956,43 +958,6 @@ async def process_tariff_type(callback: types.CallbackQuery, state: FSMContext):
         parse_mode="HTML"
     )
     await state.set_state(OrderStates.waiting_for_tariff)
-    await callback.answer()
-
-# Показать все тарифы
-@dp.callback_query(F.data == "show_all_tariffs")
-async def show_all_tariffs(callback: types.CallbackQuery, state: FSMContext):
-    """Показывает все тарифы в одном сообщении"""
-    all_tariffs_text = """
-<b>🎫 ВСЕ ТАРИФЫ НА NEW YEAR GEDAN PARTY</b>
-
-🎅 <b>ДЛЯ ПАРНЕЙ:</b>
-• 🎅 Сам себе Санта - 3000₽
-• 👥 Братья по шампанскому - 5500₽ (2750₽/чел)
-• 👥👥 Компания друзей - 10500₽ (2625₽/чел)
-
-👸 <b>ДЛЯ ДЕВУШЕК:</b>
-• 👸 Снежная королева - 2500₽
-• 👭 Сестры по глинтвейну - 4500₽ (2250₽/чел)
-• 👭👭 Квартет снегурочек - 8500₽ (2125₽/чел)
-
-❤️ <b>ДЛЯ ПАР:</b>
-• ❤️ Мистер и миссис Клаус - 5100₽ (2550₽/чел)
-
-⭐ <b>VIP ТАРИФЫ:</b>
-• ❤️ DUO VIP - 6500₽ (именная комната + подарки)
-• 🎄 SQUAD SUPER VIP - 12000₽ (эксклюзивная комната + подарки)
-"""
-
-    keyboard = [
-        [types.InlineKeyboardButton(text="🎅 ВЫБРАТЬ ДЛЯ ПАРНЕЙ", callback_data="tariff_type_male")],
-        [types.InlineKeyboardButton(text="👸 ВЫБРАТЬ ДЛЯ ДЕВУШЕК", callback_data="tariff_type_female")],
-        [types.InlineKeyboardButton(text="❤️ ВЫБРАТЬ ДЛЯ ПАР", callback_data="tariff_type_couple")],
-        [types.InlineKeyboardButton(text="⭐ ВЫБРАТЬ VIP", callback_data="tariff_type_vip")],
-        [types.InlineKeyboardButton(text="⬅️ НАЗАД", callback_data="back_to_tariff_types")]
-    ]
-    markup = types.InlineKeyboardMarkup(inline_keyboard=keyboard)
-    
-    await callback.message.edit_text(all_tariffs_text, reply_markup=markup, parse_mode="HTML")
     await callback.answer()
 
 # Назад к выбору типа тарифа
@@ -2084,8 +2049,9 @@ async def handle_other_messages(message: types.Message):
 async def webhook():
     """Обработчик вебхука для Telegram"""
     try:
-        update = types.Update(**await request.json)
-        await dp.feed_webhook_update(bot, update)
+        update_data = request.get_json()
+        update = types.Update(**update_data)
+        await dp.feed_update(bot=bot, update=update)
         return 'ok'
     except Exception as e:
         print(f"❌ Ошибка в обработчике вебхука: {e}")
@@ -2094,6 +2060,11 @@ async def webhook():
 @app.route('/')
 def home():
     return 'Bot is running!', 200
+
+@app.route('/health')
+def health():
+    """Health check endpoint для UptimeRobot"""
+    return 'OK', 200
 
 @app.route('/set_webhook')
 def set_webhook():
@@ -2112,7 +2083,8 @@ async def main():
     print("=" * 70)
     
     # Создаем bucket для чеков
-    create_receipts_bucket()
+    if supabase_client:
+        create_receipts_bucket()
     
     # Создаем файл пользователей если его нет
     if not os.path.exists("users.json"):
@@ -2151,50 +2123,32 @@ async def main():
     print("   • 📢 РАССЫЛКА: автоматическое сохранение всех пользователей")
     print("=" * 70)
     
-    # Для production (Render) используем webhook, для разработки - polling
-    if os.getenv("RENDER"):
-        print("🌐 РЕЖИМ: Webhook (Production)")
-        try:
-            # Настройка вебхука для Render
-            await bot.set_webhook(
-                url=WEBHOOK_URL,
-                drop_pending_updates=True
-            )
-            print(f"✅ Webhook настроен: {WEBHOOK_URL}")
-        except Exception as e:
-            print(f"❌ Ошибка настройки webhook: {e}")
-    else:
-        print("🔄 РЕЖИМ: Polling (Локальная разработка)")
-        try:
-            await bot.delete_webhook()
-            print("✅ Webhook удален для polling режима")
-        except Exception as e:
-            print(f"❌ Ошибка удаления webhook: {e}")
+    # Для production (Render) используем webhook
+    print("🌐 РЕЖИМ: Webhook (Production)")
+    try:
+        # Настройка вебхука для Render
+        await bot.set_webhook(
+            url=WEBHOOK_URL,
+            drop_pending_updates=True
+        )
+        print(f"✅ Webhook настроен: {WEBHOOK_URL}")
+    except Exception as e:
+        print(f"❌ Ошибка настройки webhook: {e}")
 
 def run_flask():
     """Запуск Flask приложения"""
     port = int(os.environ.get("PORT", 10000))
     print(f"🚀 Запуск Flask на порту {port}")
+    print(f"🔗 Health check: {HEALTH_CHECK_URL}")
+    print(f"📡 Webhook: {WEBHOOK_URL}")
+    
     app.run(host='0.0.0.0', port=port, debug=False, use_reloader=False)
-
-async def run_bot():
-    """Запуск бота"""
-    if os.getenv("RENDER"):
-        print("🤖 Бот работает в режиме webhook через Flask")
-        # В режиме webhook бот работает через Flask обработчики
-    else:
-        print("🤖 Запуск бота в режиме polling...")
-        try:
-            await dp.start_polling(bot)
-        except Exception as e:
-            print(f"🔴 КРИТИЧЕСКАЯ ОШИБКА: {e}")
 
 if __name__ == "__main__":
     print("🚀 Запуск объединенного приложения...")
     
-    if os.getenv("RENDER"):
-        # В production запускаем только Flask (webhook будет обрабатывать запросы)
-        run_flask()
-    else:
-        # В разработке запускаем polling
-        asyncio.run(run_bot())
+    # Запускаем асинхронную инициализацию
+    asyncio.run(main())
+    
+    # Запускаем Flask сервер
+    run_flask()
